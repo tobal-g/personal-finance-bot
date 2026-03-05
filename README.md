@@ -22,7 +22,7 @@ Telegram → aiohttp webhook → Router (LLM) → Tool execution → Telegram re
                          Neon PostgreSQL (asyncpg)
 ```
 
-The router classifies each message into one or more tasks via an LLM call. Each task maps to a tool that executes against the database and returns a Spanish-language response. Multiple tasks in a single message are processed independently with partial success support.
+The router classifies each message into one or more tasks via an LLM call. It receives prior conversation context plus the current message explicitly. Each task maps to a tool that executes against the database and returns a Spanish-language response. Multiple tasks in a single message are processed independently with partial success support.
 
 ### Key components
 
@@ -73,7 +73,7 @@ pip install -r requirements-dev.txt  # for tests
 cp .env.example .env
 ```
 
-Fill in all values in `.env`:
+Fill required values in `.env` (optional values have defaults):
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -84,7 +84,7 @@ Fill in all values in `.env`:
 | `OPENAI_API_KEY` | Yes | OpenAI API key |
 | `ALLOWED_CHAT_ID` | Yes | Telegram chat ID (int) |
 | `ALLOWED_USER_IDS` | Yes | Comma-separated Telegram user IDs |
-| `HEALTHCHECK_TOKEN` | Yes | Token for detailed health endpoint |
+| `HEALTHCHECK_TOKEN` | No | Token for detailed health endpoint (default: empty, only public minimal health response) |
 | `LOG_LEVEL` | No | Default: `INFO` |
 | `PORT` | No | Default: `8080` |
 | `CONTEXT_MAX_USER_CHARS` | No | Max chars stored per user turn in short-term history (default: `400`) |
@@ -110,7 +110,15 @@ python -m bot.main
 .venv/bin/pytest tests/ -v
 ```
 
-124 tests across 18 test files. Uses `pytest-asyncio` with `asyncio_mode = "auto"`.
+134 tests across 17 test files. Uses `pytest-asyncio` with `asyncio_mode = "auto"`.
+
+### Context and token controls
+
+- Router context uses previous turns + current message (no duplication of current message).
+- `CONTEXT_MAX_USER_CHARS` truncates stored user turns in short-term history.
+- `CONTEXT_MAX_MEMORY_CHARS` truncates concatenated long-term memory loaded from `memory/*.md`.
+- `QUERY_FORMAT_MAX_ROWS` and `QUERY_FORMAT_MAX_CHARS` window the DB result payload sent to the query formatter LLM call.
+- When limits are hit, payload is truncated/windowed (the request does not fail).
 
 ## Docker
 

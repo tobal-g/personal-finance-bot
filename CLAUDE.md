@@ -23,7 +23,7 @@ docker run --env-file .env -p 8080:8080 finance-bot
 
 ## Architecture
 
-**Pipeline:** `webhook.py` → validate → store turn → fetch expense types → build context → route (LLM) → clarify or execute tool → send response
+**Pipeline:** `webhook.py` → validate → build context (prior turns only) → store current turn → fetch expense types → route (LLM) → clarify or execute tool → send response
 
 **Key files:**
 - `bot/webhook.py` — Main pipeline, error handling, health endpoint
@@ -33,7 +33,7 @@ docker run --env-file .env -p 8080:8080 finance-bot
 - `bot/tools/__init__.py` — ToolRegistry with auto-discovery from `bot/tools/`
 - `bot/tools/base.py` — `BaseTool` ABC + `ToolContext` dataclass
 - `bot/integrations/llm.py` — OpenAI wrapper, 3x retry, JSON mode, `gpt-5.2`
-- `bot/context/store.py` — In-memory per-chat history (TTL 600s, max 6 turns)
+- `bot/context/store.py` — In-memory per-chat history (TTL 600s, max 6 turns, user turns truncated at `max_user_chars`)
 - `bot/db/queries.py` — All SQL constants + `DB_SCHEMA_CONTEXT`
 
 **Tools:** `log_expense`, `delete_expense`, `log_exchange_rate`, `query` (aliases: query_expenses/budget/exchange/general), `modify_budget`
@@ -70,7 +70,15 @@ Neon PostgreSQL. Tables: `expenses`, `exchange_rates`, `expense_types`, `budget`
 
 ## Config
 
-All env vars validated at startup in `bot/config.py`. Required: `TELEGRAM_BOT_TOKEN`, `WEBHOOK_URL`, `WEBHOOK_SECRET_TOKEN`, `DATABASE_URL`, `OPENAI_API_KEY`, `ALLOWED_CHAT_ID`, `ALLOWED_USER_IDS`, `HEALTHCHECK_TOKEN`. Optional: `LOG_LEVEL` (INFO), `PORT` (8080).
+All env vars validated at startup in `bot/config.py`. Required: `TELEGRAM_BOT_TOKEN`, `WEBHOOK_URL`, `WEBHOOK_SECRET_TOKEN`, `DATABASE_URL`, `OPENAI_API_KEY`, `ALLOWED_CHAT_ID`, `ALLOWED_USER_IDS`, `HEALTHCHECK_TOKEN`. Optional: `LOG_LEVEL` (INFO), `PORT` (8080), `CONTEXT_MAX_USER_CHARS` (400), `CONTEXT_MAX_MEMORY_CHARS` (4000), `QUERY_FORMAT_MAX_ROWS` (50), `QUERY_FORMAT_MAX_CHARS` (8000).
+
+## Token/context caps
+
+- **Router de-duplication**: Context is built from prior turns only; current message appended separately as `CURRENT MESSAGE:`. First message (no history) sends raw message only.
+- **User turn truncation**: `ConversationStore` truncates user turns at `max_user_chars` (default 400) on storage.
+- **Bot turn truncation**: `build_context()` truncates bot responses at 200 chars in the context string.
+- **Memory cap**: `load_memory()` caps total memory at `MAX_MEMORY_CHARS` (default 4000).
+- **Query formatter caps**: `QueryTool` limits formatter input to `_MAX_FORMAT_ROWS` (50) and `_MAX_FORMAT_CHARS` (8000). Metadata header tells the LLM about truncation.
 
 ## Milestones
 
