@@ -15,6 +15,8 @@ class ToolContext:
     task_id: str
     api_key: str
     llm_call: Callable[..., Coroutine]  # reference to call_llm
+    query_format_max_rows: int | None = None
+    query_format_max_chars: int | None = None
 
 
 class BaseTool(ABC):

@@ -7,11 +7,25 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def _require(name: str, env: dict[str, str]) -> str:
-    val = env.get(name, "").strip()
-    if not val:
-        raise RuntimeError(f"Missing required env var: {name}")
-    return val
+def _int_with_default(
+    env: dict[str, str],
+    name: str,
+    default: int,
+    *,
+    min_value: int = 1,
+) -> int:
+    raw = env.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid integer for {name}: {raw!r}") from exc
+    if value < min_value:
+        raise RuntimeError(
+            f"Invalid value for {name}: {value} (must be >= {min_value})"
+        )
+    return value
 
 
 class Config:
@@ -52,3 +66,23 @@ class Config:
         self.HEALTHCHECK_TOKEN: str = env.get("HEALTHCHECK_TOKEN", "").strip()
         self.LOG_LEVEL: str = env.get("LOG_LEVEL", "INFO").strip().upper()
         self.PORT: int = int(env.get("PORT", "8080").strip())
+        self.CONTEXT_MAX_USER_CHARS: int = _int_with_default(
+            env,
+            "CONTEXT_MAX_USER_CHARS",
+            400,
+        )
+        self.CONTEXT_MAX_MEMORY_CHARS: int = _int_with_default(
+            env,
+            "CONTEXT_MAX_MEMORY_CHARS",
+            4000,
+        )
+        self.QUERY_FORMAT_MAX_ROWS: int = _int_with_default(
+            env,
+            "QUERY_FORMAT_MAX_ROWS",
+            50,
+        )
+        self.QUERY_FORMAT_MAX_CHARS: int = _int_with_default(
+            env,
+            "QUERY_FORMAT_MAX_CHARS",
+            8000,
+        )

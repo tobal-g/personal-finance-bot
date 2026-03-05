@@ -74,3 +74,19 @@ class TestConversationStore:
         )
         history = store.get_history(1)
         assert history[0].task_result == {"task": "log_expense"}
+
+    def test_user_turn_truncated_to_max_user_chars(self):
+        store = ConversationStore(max_user_chars=5)
+        store.add_turn(1, Turn(role="user", text="123456789"))
+
+        history = store.get_history(1)
+        assert len(history) == 1
+        assert history[0].text == "12345"
+
+    def test_bot_turn_not_truncated_by_user_char_cap(self):
+        store = ConversationStore(max_user_chars=3)
+        store.add_turn(1, Turn(role="bot", text="abcdef"))
+
+        history = store.get_history(1)
+        assert len(history) == 1
+        assert history[0].text == "abcdef"

@@ -8,7 +8,12 @@ import asyncpg
 import pytest
 
 from bot.tools.base import ToolContext
-from bot.tools.query import QueryTool, validate_sql
+from bot.tools.query import (
+    QueryTool,
+    _MAX_FORMAT_CHARS,
+    _MAX_FORMAT_ROWS,
+    validate_sql,
+)
 
 
 # --- Helpers ---
@@ -183,3 +188,40 @@ async def test_llm_bad_json(tool):
     result = await tool.execute({"question": "cuanto gaste?"}, ctx)
 
     assert "No pude armar una consulta válida" in result
+
+
+async def test_query_format_payload_caps_rows(tool):
+    """Formatter payload includes at most _MAX_FORMAT_ROWS rows."""
+    sql_response = json.dumps({"sql": "SELECT id FROM expenses", "explanation": "ids"})
+    format_response = "ok"
+    query_rows = [{"id": i} for i in range(_MAX_FORMAT_ROWS + 25)]
+
+    conn = _FakeConn(expense_types=EXPENSE_TYPES, query_rows=query_rows)
+    pool = _FakePool(conn)
+    ctx = _make_context(pool, llm_returns=[sql_response, format_response])
+
+    await tool.execute({"question": "mostrame ids"}, ctx)
+
+    fmt_call = ctx.llm_call.call_args_list[1]
+    fmt_msg = fmt_call.kwargs["user_message"]
+    assert f"included_rows={_MAX_FORMAT_ROWS}" in fmt_msg
+    assert f"total_rows={len(query_rows)}" in fmt_msg
+
+
+async def test_query_format_payload_caps_chars(tool):
+    """Formatter payload results section is capped at _MAX_FORMAT_CHARS."""
+    sql_response = json.dumps({"sql": "SELECT text FROM expenses", "explanation": "text"})
+    format_response = "ok"
+    query_rows = [{"text": "x" * (_MAX_FORMAT_CHARS + 300)}]
+
+    conn = _FakeConn(expense_types=EXPENSE_TYPES, query_rows=query_rows)
+    pool = _FakePool(conn)
+    ctx = _make_context(pool, llm_returns=[sql_response, format_response])
+
+    await tool.execute({"question": "dame texto"}, ctx)
+
+    fmt_call = ctx.llm_call.call_args_list[1]
+    fmt_msg = fmt_call.kwargs["user_message"]
+    results_section = fmt_msg.split("## Results\n", 1)[1]
+    assert len(results_section) <= _MAX_FORMAT_CHARS
+    assert f"char_cap={_MAX_FORMAT_CHARS}" in fmt_msg

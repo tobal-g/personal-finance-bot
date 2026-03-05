@@ -21,13 +21,27 @@ class ConversationStore:
     Entries older than ttl_seconds are pruned on access.
     """
 
-    def __init__(self, ttl_seconds: int = 600, max_turns: int = 6):
+    def __init__(
+        self,
+        ttl_seconds: int = 600,
+        max_turns: int = 6,
+        max_user_chars: int = 400,
+    ):
         self._store: dict[int, list[Turn]] = {}
         self._ttl = ttl_seconds
         self._max_turns = max_turns
+        self._max_user_chars = max_user_chars
 
     def add_turn(self, chat_id: int, turn: Turn) -> None:
         """Add a turn and prune old entries."""
+        if turn.role == "user" and len(turn.text) > self._max_user_chars:
+            turn = Turn(
+                role=turn.role,
+                text=turn.text[: self._max_user_chars],
+                timestamp=turn.timestamp,
+                task_result=turn.task_result,
+            )
+
         if chat_id not in self._store:
             self._store[chat_id] = []
         self._store[chat_id].append(turn)

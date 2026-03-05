@@ -18,6 +18,8 @@ _FORBIDDEN_SQL = re.compile(
 )
 
 _MAX_RESPONSE_LEN = 4000
+_MAX_FORMAT_ROWS = 50
+_MAX_FORMAT_CHARS = 8000
 
 _ERR_INVALID_SQL = (
     "No pude armar una consulta válida para lo que preguntaste — el SQL que generé "
@@ -105,11 +107,32 @@ class QueryTool(BaseTool):
         if not rows:
             return _ERR_NO_RESULTS
 
-        # Format results via LLM
-        results_str = "\n".join(str(dict(r)) for r in rows)
+        # Format results via LLM (cap payload size to control token usage)
+        max_rows = context.query_format_max_rows or _MAX_FORMAT_ROWS
+        max_chars = context.query_format_max_chars or _MAX_FORMAT_CHARS
+
+        rows_for_format = rows[:max_rows]
+        result_lines: list[str] = []
+        result_chars = 0
+        for row in rows_for_format:
+            line = str(dict(row))
+            line_len = len(line) + 1  # include newline separator
+            if result_lines and (result_chars + line_len) > max_chars:
+                break
+            if not result_lines and line_len > max_chars:
+                # Keep at least one row, truncated to the cap.
+                line = line[: max_chars - 1]
+                line_len = len(line) + 1
+            result_lines.append(line)
+            result_chars += line_len
+
+        results_str = "\n".join(result_lines)
         fmt_msg = (
             f"## User question\n{question}\n\n"
             f"## Query explanation\n{explanation}\n\n"
+            f"## Results window\n"
+            f"included_rows={len(result_lines)} total_rows={len(rows)}\n"
+            f"included_chars={len(results_str)} char_cap={max_chars}\n\n"
             f"## Results\n{results_str}"
         )
 

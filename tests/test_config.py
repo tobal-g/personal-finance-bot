@@ -17,6 +17,10 @@ class TestConfig:
         assert cfg.HEALTHCHECK_TOKEN == "health-test-token"
         assert cfg.LOG_LEVEL == "DEBUG"
         assert cfg.PORT == 9090
+        assert cfg.CONTEXT_MAX_USER_CHARS == 350
+        assert cfg.CONTEXT_MAX_MEMORY_CHARS == 3000
+        assert cfg.QUERY_FORMAT_MAX_ROWS == 40
+        assert cfg.QUERY_FORMAT_MAX_CHARS == 7000
 
     def test_missing_single_var_raises(self):
         env = make_env()
@@ -70,3 +74,23 @@ class TestConfig:
     def test_webhook_url_strips_trailing_slash(self):
         cfg = Config(env=make_env(WEBHOOK_URL="https://example.com/"))
         assert cfg.WEBHOOK_URL == "https://example.com"
+
+    def test_defaults_context_and_query_caps(self):
+        env = make_env()
+        del env["CONTEXT_MAX_USER_CHARS"]
+        del env["CONTEXT_MAX_MEMORY_CHARS"]
+        del env["QUERY_FORMAT_MAX_ROWS"]
+        del env["QUERY_FORMAT_MAX_CHARS"]
+        cfg = Config(env=env)
+        assert cfg.CONTEXT_MAX_USER_CHARS == 400
+        assert cfg.CONTEXT_MAX_MEMORY_CHARS == 4000
+        assert cfg.QUERY_FORMAT_MAX_ROWS == 50
+        assert cfg.QUERY_FORMAT_MAX_CHARS == 8000
+
+    def test_invalid_context_cap_raises(self):
+        with pytest.raises(RuntimeError, match="CONTEXT_MAX_USER_CHARS"):
+            Config(env=make_env(CONTEXT_MAX_USER_CHARS="0"))
+
+    def test_invalid_query_cap_raises(self):
+        with pytest.raises(RuntimeError, match="QUERY_FORMAT_MAX_CHARS"):
+            Config(env=make_env(QUERY_FORMAT_MAX_CHARS="abc"))

@@ -35,3 +35,5 @@ htmlcov/
 # Internal docs
 PLAN.md
 CRON_SNAPSHOT.md
+
+product-files/

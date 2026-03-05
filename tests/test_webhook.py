@@ -102,6 +102,8 @@ class TestWebhookFiltering:
         )
         assert resp.status == 200
         await asyncio.sleep(0.1)
+        # First message should route with no prior context.
+        assert mock_route.call_args[0][1] == ""
         # Pipeline was invoked (send_message called with error fallback since route returned [])
         mock_send.assert_called_once()
 

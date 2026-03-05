@@ -20,8 +20,7 @@ from bot.utils.logging_safety import redact_sensitive
 
 logger = logging.getLogger(__name__)
 
-# Module-level singletons initialized in create_app
-_conversation_store = ConversationStore()
+# Module-level singleton initialized in create_app
 _tool_registry = ToolRegistry()
 
 # --- User-facing error messages (Argentine Spanish, transparent about internals) ---
@@ -66,7 +65,9 @@ def create_app(config, db_pool) -> web.Application:
     app = web.Application()
     app["config"] = config
     app["db_pool"] = db_pool
-    app["conversation_store"] = _conversation_store
+    app["conversation_store"] = ConversationStore(
+        max_user_chars=config.CONTEXT_MAX_USER_CHARS,
+    )
     app["tool_registry"] = _tool_registry
 
     # Auto-discover tools
@@ -147,14 +148,19 @@ async def _process_message(
     start_time = time.monotonic()
 
     try:
-        # Store the user turn
+        # Build context from conversation history BEFORE storing the current turn,
+        # so context only contains prior turns.
+        context = build_context(
+            chat_id,
+            store,
+            max_memory_chars=config.CONTEXT_MAX_MEMORY_CHARS,
+        )
+
+        # Store the user turn for future follow-ups.
         store.add_turn(chat_id, Turn(role="user", text=text))
 
         # Fetch expense types from DB
         expense_types = await _fetch_expense_types(db_pool)
-
-        # Build context from conversation history
-        context = build_context(chat_id, store)
 
         # Route the message — may raise LLM errors
         tasks = await _route_with_error_handling(
@@ -316,6 +322,8 @@ async def _execute_tool_safe(
         task_id=task_id,
         api_key=config.OPENAI_API_KEY,
         llm_call=call_llm,
+        query_format_max_rows=config.QUERY_FORMAT_MAX_ROWS,
+        query_format_max_chars=config.QUERY_FORMAT_MAX_CHARS,
     )
     logger.info("tool.start | task=%s tool=%s", task_id, task_result.task)
 

@@ -4,7 +4,12 @@ from bot.context.memory import load_memory
 from bot.context.store import ConversationStore
 
 
-def build_context(chat_id: int, store: ConversationStore) -> str:
+def build_context(
+    chat_id: int,
+    store: ConversationStore,
+    *,
+    max_memory_chars: int | None = None,
+) -> str:
     """Build the context block for the router prompt.
 
     Combines recent conversation history with long-term memory.
@@ -35,7 +40,7 @@ def build_context(chat_id: int, store: ConversationStore) -> str:
         )
 
     # Long-term memory
-    memory = load_memory()
+    memory = load_memory(max_chars=max_memory_chars)
     if memory:
         parts.append(f"## LONG-TERM MEMORY\n\n{memory}")
 

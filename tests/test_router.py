@@ -121,3 +121,28 @@ class TestRouteMessage:
         assert "Café" in system_prompt
         assert "Uber" in system_prompt
         assert "Ocio" in system_prompt
+
+    async def test_uses_context_plus_current_message(self):
+        response = json.dumps(
+            {
+                "tasks": [
+                    {"task": "query_expenses", "data": {}, "requires_clarification": False}
+                ]
+            }
+        )
+        context = (
+            "## CONVERSATION CONTEXT (recent turns)\n\n"
+            'Turn 1 - User: "cuanto gaste?"\n'
+            'Turn 1 - Bot response: "¿De qué período?"\n'
+            'Turn 2 - User: "este mes"'
+        )
+        mock_llm = AsyncMock(return_value=response)
+
+        with patch("bot.agent.router.call_llm", mock_llm):
+            await route_message(
+                "este mes", context, ["Café"], "req_6", api_key="sk-t"
+            )
+
+        user_content = mock_llm.call_args[0][1]
+        assert user_content.startswith(context)
+        assert "CURRENT MESSAGE: este mes" in user_content

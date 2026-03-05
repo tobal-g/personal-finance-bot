@@ -18,6 +18,10 @@ def make_env(**overrides) -> dict[str, str]:
         "HEALTHCHECK_TOKEN": "health-test-token",
         "LOG_LEVEL": "DEBUG",
         "PORT": "9090",
+        "CONTEXT_MAX_USER_CHARS": "350",
+        "CONTEXT_MAX_MEMORY_CHARS": "3000",
+        "QUERY_FORMAT_MAX_ROWS": "40",
+        "QUERY_FORMAT_MAX_CHARS": "7000",
     }
     base.update(overrides)
     return base
