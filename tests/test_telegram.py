@@ -9,6 +9,8 @@ from yarl import URL
 from bot.integrations.telegram import (
     MAX_MESSAGE_LENGTH,
     TRUNCATION_NOTICE,
+    download_file,
+    get_file_url,
     send_message,
 )
 
@@ -93,3 +95,70 @@ class TestRetry:
         combined = " ".join(r.message for r in caplog.records)
         assert TOKEN not in combined
         assert "[REDACTED]" in combined
+
+
+GET_FILE_URL = f"https://api.telegram.org/bot{TOKEN}/getFile"
+
+
+class TestGetFileUrl:
+    async def test_successful_get_file(self):
+        with aioresponses() as mocked:
+            mocked.post(
+                GET_FILE_URL,
+                status=200,
+                payload={"ok": True, "result": {"file_path": "photos/file_0.jpg"}},
+            )
+            result = await get_file_url("file_abc", TOKEN)
+
+        assert result == f"https://api.telegram.org/file/bot{TOKEN}/photos/file_0.jpg"
+
+    async def test_api_error_returns_none(self):
+        with aioresponses() as mocked:
+            mocked.post(GET_FILE_URL, status=400, payload={"ok": False})
+            result = await get_file_url("file_abc", TOKEN)
+
+        assert result is None
+
+    async def test_missing_file_path_returns_none(self):
+        with aioresponses() as mocked:
+            mocked.post(
+                GET_FILE_URL,
+                status=200,
+                payload={"ok": True, "result": {}},
+            )
+            result = await get_file_url("file_abc", TOKEN)
+
+        assert result is None
+
+    async def test_network_error_returns_none(self):
+        with aioresponses() as mocked:
+            mocked.post(GET_FILE_URL, exception=ConnectionError("nope"))
+            result = await get_file_url("file_abc", TOKEN)
+
+        assert result is None
+
+
+class TestDownloadFile:
+    async def test_successful_download(self):
+        file_url = f"https://api.telegram.org/file/bot{TOKEN}/photos/file_0.jpg"
+        with aioresponses() as mocked:
+            mocked.get(file_url, status=200, body=b"\xff\xd8jpeg-data")
+            result = await download_file(file_url)
+
+        assert result == b"\xff\xd8jpeg-data"
+
+    async def test_error_returns_none(self):
+        file_url = "https://api.telegram.org/file/botX/missing.jpg"
+        with aioresponses() as mocked:
+            mocked.get(file_url, status=404)
+            result = await download_file(file_url)
+
+        assert result is None
+
+    async def test_network_error_returns_none(self):
+        file_url = "https://api.telegram.org/file/botX/photo.jpg"
+        with aioresponses() as mocked:
+            mocked.get(file_url, exception=ConnectionError("nope"))
+            result = await download_file(file_url)
+
+        assert result is None

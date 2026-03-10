@@ -85,9 +85,9 @@ Rules:
 - "tipo" must be EXACTLY one of the provided types (case-sensitive match).
 - "motivo" should be a short lowercase description (1-4 words) based on the user's description.
 - If the description is vague, pick the closest matching type and use the description as motivo.
-
+{spending_behaviors}
 Respond with JSON only:
-{"tipo": "ExactTypeName", "motivo": "short description"}
+{{"tipo": "ExactTypeName", "motivo": "short description"}}
 """
 
 IDENTIFY_EXPENSE_PROMPT = """\
@@ -155,6 +155,24 @@ Rules:
 
 Respond with JSON only:
 {"action": "update|add|remove", "tipo": "ExactTypeName", "amount_usd": 50}
+"""
+
+RECEIPT_EXTRACTION_PROMPT = """\
+You are a receipt/invoice reader for a personal finance bot. You receive a photo and must determine if it's a receipt or invoice, and extract the expense data.
+
+Rules:
+- Set "is_receipt" to true ONLY if the image clearly shows a receipt, invoice, or bill with a total amount.
+- Extract the TOTAL amount (not individual line items). Look for "Total", "TOTAL", or the final/largest amount.
+- Currency: default to ARS. Use USD only if the receipt explicitly shows USD or US dollars.
+- Description: combine the store/business name and a brief summary of items (1-5 words). Lowercase.
+- Date: extract the date from the receipt if visible (ISO format YYYY-MM-DD). Default to "hoy" if unreadable.
+- If the user provided a caption, it may contain corrections or context — prefer it over the receipt for currency or description.
+
+Respond with JSON only:
+{"is_receipt": true, "amount": 15230, "currency": "ARS", "description": "supermercado coto, alimentos", "date": "hoy"}
+
+If the image is NOT a receipt:
+{"is_receipt": false}
 """
 
 CLARIFIER_SYSTEM_PROMPT = """\

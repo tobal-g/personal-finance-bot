@@ -5,6 +5,7 @@ import logging
 from datetime import date, timedelta
 
 from bot.agent.prompts import CATEGORIZE_EXPENSE_PROMPT
+from bot.context.memory import load_memory_file
 from bot.db.queries import GET_ACTIVE_EXPENSE_TYPES, INSERT_EXPENSE
 from bot.tools.base import BaseTool, ToolContext
 
@@ -56,8 +57,18 @@ class LogExpenseTool(BaseTool):
         types_str = ", ".join(expense_types)
         user_msg = f"Descripción: {description}\nMonto: {amount} {currency}\nTipos disponibles: {types_str}"
 
+        behaviors = load_memory_file("spending_behaviors.md")
+        behaviors_block = (
+            f"\nSpending behaviors (apply these rules when categorizing):\n{behaviors}\n"
+            if behaviors
+            else ""
+        )
+        system_prompt = CATEGORIZE_EXPENSE_PROMPT.format(
+            spending_behaviors=behaviors_block,
+        )
+
         llm_raw = await context.llm_call(
-            system_prompt=CATEGORIZE_EXPENSE_PROMPT,
+            system_prompt=system_prompt,
             user_message=user_msg,
             purpose="categorize_expense",
             request_id=context.request_id,

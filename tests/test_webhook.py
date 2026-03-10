@@ -54,6 +54,26 @@ def _webhook_body(text="hola", chat_id=-100, user_id=111):
     }
 
 
+def _webhook_photo_body(file_id="abc123", caption="", chat_id=-100, user_id=111):
+    body = {
+        "update_id": 1,
+        "message": {
+            "message_id": 1,
+            "from": {"id": user_id, "is_bot": False, "first_name": "Test"},
+            "chat": {"id": chat_id, "type": "group"},
+            "date": 1700000000,
+            "photo": [
+                {"file_id": f"{file_id}_small", "width": 90, "height": 90, "file_size": 1000},
+                {"file_id": f"{file_id}_med", "width": 320, "height": 320, "file_size": 5000},
+                {"file_id": file_id, "width": 800, "height": 800, "file_size": 50000},
+            ],
+        },
+    }
+    if caption:
+        body["message"]["caption"] = caption
+    return body
+
+
 def _health_headers():
     return {"X-Health-Token": "health-test-token"}
 
@@ -144,7 +164,7 @@ class TestWebhookFiltering:
         )
         assert resp.status == 200
 
-    async def test_no_text_returns_200(self, aiohttp_client, app):
+    async def test_no_text_and_no_photo_returns_200(self, aiohttp_client, app):
         client = await aiohttp_client(app)
         body = _webhook_body()
         del body["message"]["text"]
@@ -154,6 +174,113 @@ class TestWebhookFiltering:
             headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
         )
         assert resp.status == 200
+
+    async def test_photo_message_accepted(self, aiohttp_client, app):
+        """Photo message (no text) should be accepted and return 200."""
+        client = await aiohttp_client(app)
+        resp = await client.post(
+            "/webhook",
+            json=_webhook_photo_body(),
+            headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
+        )
+        assert resp.status == 200
+
+    @patch("bot.webhook.send_message", new_callable=AsyncMock)
+    async def test_photo_disallowed_chat_no_processing(
+        self, mock_send, aiohttp_client, app
+    ):
+        client = await aiohttp_client(app)
+        resp = await client.post(
+            "/webhook",
+            json=_webhook_photo_body(chat_id=-999),
+            headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
+        )
+        assert resp.status == 200
+        await asyncio.sleep(0.1)
+        mock_send.assert_not_called()
+
+    @patch("bot.webhook.send_message", new_callable=AsyncMock)
+    @patch("bot.webhook.extract_receipt", new_callable=AsyncMock)
+    async def test_photo_triggers_receipt_extraction(
+        self, mock_extract, mock_send, aiohttp_client, app
+    ):
+        from bot.agent.receipt import ReceiptResult
+
+        mock_extract.return_value = ReceiptResult(
+            is_receipt=True,
+            amount=15000,
+            currency="ARS",
+            description="supermercado",
+            date="hoy",
+        )
+        client = await aiohttp_client(app)
+        resp = await client.post(
+            "/webhook",
+            json=_webhook_photo_body(),
+            headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
+        )
+        assert resp.status == 200
+        await asyncio.sleep(0.2)
+        mock_extract.assert_called_once()
+        # Verify the largest photo was used
+        call_args = mock_extract.call_args
+        assert call_args[0][0] == "abc123"  # file_id of largest photo
+
+    @patch("bot.webhook.send_message", new_callable=AsyncMock)
+    @patch("bot.webhook.extract_receipt", new_callable=AsyncMock)
+    async def test_photo_not_receipt_sends_error(
+        self, mock_extract, mock_send, aiohttp_client, app
+    ):
+        from bot.agent.receipt import ReceiptResult
+
+        mock_extract.return_value = ReceiptResult(is_receipt=False)
+        client = await aiohttp_client(app)
+        resp = await client.post(
+            "/webhook",
+            json=_webhook_photo_body(),
+            headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
+        )
+        assert resp.status == 200
+        await asyncio.sleep(0.2)
+        mock_send.assert_called_once()
+        sent_text = mock_send.call_args[0][1]
+        assert "ticket o factura" in sent_text
+
+    @patch("bot.webhook.send_message", new_callable=AsyncMock)
+    @patch("bot.webhook.extract_receipt", new_callable=AsyncMock, return_value=None)
+    async def test_photo_download_failure_sends_error(
+        self, mock_extract, mock_send, aiohttp_client, app
+    ):
+        client = await aiohttp_client(app)
+        resp = await client.post(
+            "/webhook",
+            json=_webhook_photo_body(),
+            headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
+        )
+        assert resp.status == 200
+        await asyncio.sleep(0.2)
+        mock_send.assert_called_once()
+        sent_text = mock_send.call_args[0][1]
+        assert "descargar la foto" in sent_text
+
+    @patch("bot.webhook.send_message", new_callable=AsyncMock)
+    @patch("bot.webhook.extract_receipt", new_callable=AsyncMock)
+    async def test_photo_with_caption_passes_caption(
+        self, mock_extract, mock_send, aiohttp_client, app
+    ):
+        from bot.agent.receipt import ReceiptResult
+
+        mock_extract.return_value = ReceiptResult(is_receipt=False)
+        client = await aiohttp_client(app)
+        resp = await client.post(
+            "/webhook",
+            json=_webhook_photo_body(caption="USD farmacia"),
+            headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
+        )
+        assert resp.status == 200
+        await asyncio.sleep(0.2)
+        call_args = mock_extract.call_args
+        assert call_args[0][1] == "USD farmacia"  # caption arg
 
 
 class TestHealth:

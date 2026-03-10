@@ -9,6 +9,7 @@ Telegram bot for personal finance management. Communicates in Argentine Spanish 
 - **Record exchange rates** (ARS/USD) directly or calculated from amounts
 - **Query anything** — natural-language questions answered via SQL generation ("cuanto gaste este mes?")
 - **Manage budgets** — update, add, or remove budget categories
+- **Receipt photos** — snap a paper receipt, send the photo, expense is logged automatically (vision LLM extracts store, amount, currency)
 - **Multi-task** — handle multiple actions in a single message ("5000 uber, cuanto gaste hoy?")
 - **Conversation context** — resolves follow-ups across messages
 
@@ -16,10 +17,12 @@ Telegram bot for personal finance management. Communicates in Argentine Spanish 
 
 ```
 Telegram → aiohttp webhook → Router (LLM) → Tool execution → Telegram response
-                                  ↓
-                         ConversationStore (in-memory, 10min TTL)
-                                  ↓
-                         Neon PostgreSQL (asyncpg)
+                  ↓                ↓
+           Photo? → Vision LLM → log_expense directly (bypasses router)
+                                   ↓
+                          ConversationStore (in-memory, 10min TTL)
+                                   ↓
+                          Neon PostgreSQL (asyncpg)
 ```
 
 The router classifies each message into one or more tasks via an LLM call. It receives prior conversation context plus the current message explicitly. Each task maps to a tool that executes against the database and returns a Spanish-language response. Multiple tasks in a single message are processed independently with partial success support.
@@ -31,11 +34,12 @@ The router classifies each message into one or more tasks via an LLM call. It re
 | Webhook server | `bot/webhook.py` | Validates, routes, executes, responds |
 | Router | `bot/agent/router.py` | LLM-based message → task classification |
 | Clarifier | `bot/agent/clarifier.py` | Generates clarification prompts |
+| Receipt extractor | `bot/agent/receipt.py` | Downloads photo + vision LLM extraction |
 | Prompts | `bot/agent/prompts.py` | All LLM system prompts (centralized) |
 | Context store | `bot/context/store.py` | Per-chat conversation history (TTL 600s, max 6 turns) |
 | Context manager | `bot/context/manager.py` | Assembles history + long-term memory |
 | Tool registry | `bot/tools/__init__.py` | Auto-discovers `BaseTool` subclasses |
-| LLM wrapper | `bot/integrations/llm.py` | OpenAI SDK with 3x retry, JSON mode |
+| LLM wrapper | `bot/integrations/llm.py` | OpenAI SDK with 3x retry, JSON mode, vision support |
 | DB pool | `bot/db/pool.py` | asyncpg pool lifecycle |
 | SQL constants | `bot/db/queries.py` | All SQL + `DB_SCHEMA_CONTEXT` for LLM |
 
@@ -110,7 +114,7 @@ python -m bot.main
 .venv/bin/pytest tests/ -v
 ```
 
-134 tests across 17 test files. Uses `pytest-asyncio` with `asyncio_mode = "auto"`.
+162 tests across 18 test files. Uses `pytest-asyncio` with `asyncio_mode = "auto"`.
 
 ### Context and token controls
 
@@ -160,6 +164,7 @@ bot/
 ├── agent/
 │   ├── router.py        # Message classification
 │   ├── clarifier.py     # Clarification generation
+│   ├── receipt.py       # Receipt photo extraction (vision LLM)
 │   └── prompts.py       # All LLM prompts
 ├── context/
 │   ├── store.py         # Conversation history
@@ -173,8 +178,8 @@ bot/
 │   ├── query.py
 │   └── modify_budget.py
 ├── integrations/
-│   ├── telegram.py      # Send message with retry
-│   └── llm.py           # OpenAI wrapper with retry
+│   ├── telegram.py      # Send message, file download with retry
+│   └── llm.py           # OpenAI wrapper with retry + vision
 ├── db/
 │   ├── pool.py          # asyncpg pool
 │   └── queries.py       # SQL constants

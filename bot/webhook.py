@@ -11,7 +11,8 @@ import openai
 from aiohttp import web
 
 from bot.agent.clarifier import generate_clarification
-from bot.agent.router import route_message
+from bot.agent.receipt import extract_receipt
+from bot.agent.router import TaskResult, route_message
 from bot.context.manager import build_context
 from bot.context.store import ConversationStore, Turn
 from bot.integrations.telegram import send_message
@@ -46,17 +47,27 @@ _ERR_LLM_TIMEOUT = (
 
 _ERR_LLM_AUTH = (
     "No me pude autenticar con el servicio de IA — la API key parece inválida "
-    "o expirada. Avisale a Tobal para que la revise."
+    "o expirada. Avisale al admin para que la revise."
 )
 
 _ERR_DB_CONNECTION = (
     "No me pude conectar a la base de datos — el pool de conexiones no respondió. "
-    "Si el problema persiste, avisale a Tobal."
+    "Si el problema persiste, avisale al admin."
 )
 
 _ERR_TOOL_GENERIC = (
     "Algo salió mal ejecutando la tarea '{tool_name}'. "
     "Probá de nuevo o reformulá el mensaje."
+)
+
+_ERR_RECEIPT_DOWNLOAD = (
+    "No pude descargar la foto del ticket. "
+    "Probá mandándola de nuevo o sacá una foto con mejor iluminación."
+)
+
+_ERR_RECEIPT_NOT_FOUND = (
+    "No pude identificar un ticket o factura en la foto. "
+    "Asegurate de que se vea bien el total y probá de nuevo."
 )
 
 
@@ -101,15 +112,20 @@ async def handle_webhook(request: web.Request) -> web.Response:
     chat_id = message.get("chat", {}).get("id")
     user_id = message.get("from", {}).get("id")
     text = message.get("text", "")
+    photo = message.get("photo")  # list of PhotoSize or None
+    caption = message.get("caption", "")
 
-    if not text or chat_id is None or user_id is None:
+    # Accept text messages OR photo messages
+    has_content = bool(text) or bool(photo)
+    if not has_content or chat_id is None or user_id is None:
         return web.Response(status=200, text="OK")
 
+    content_preview = text[:80] if text else f"[photo file_id={photo[-1]['file_id'][:20]}]"
     logger.info(
-        "telegram.incoming | user_id=%s chat_id=%s text=%r",
+        "telegram.incoming | user_id=%s chat_id=%s content=%r",
         user_id,
         chat_id,
-        text[:80],
+        content_preview,
     )
 
     # Check allowlists
@@ -130,6 +146,8 @@ async def handle_webhook(request: web.Request) -> web.Response:
             request.app["tool_registry"],
             text,
             chat_id,
+            photo=photo,
+            caption=caption,
         )
     )
     return web.Response(status=200, text="OK")
@@ -142,12 +160,23 @@ async def _process_message(
     registry: ToolRegistry,
     text: str,
     chat_id: int,
+    *,
+    photo: list[dict] | None = None,
+    caption: str | None = None,
 ) -> None:
     """Process a message through the full pipeline."""
     request_id = f"req_{secrets.token_hex(2)}"
     start_time = time.monotonic()
 
     try:
+        # --- Receipt photo preprocessing ---
+        if photo and not text:
+            await _process_receipt(
+                config, db_pool, store, registry,
+                photo, caption, chat_id, request_id, start_time,
+            )
+            return
+
         # Build context from conversation history BEFORE storing the current turn,
         # so context only contains prior turns.
         context = build_context(
@@ -278,6 +307,112 @@ async def _process_message(
                 chat_id,
                 exc_info=True,
             )
+
+
+async def _process_receipt(
+    config, db_pool, store, registry,
+    photo, caption, chat_id, request_id, start_time,
+) -> None:
+    """Process a receipt photo: extract data via vision LLM, then log expense."""
+    file_id = photo[-1]["file_id"]
+
+    logger.info(
+        "receipt.start | req=%s file_id=%s caption=%r",
+        request_id,
+        file_id,
+        (caption or "")[:80],
+    )
+
+    try:
+        result = await extract_receipt(
+            file_id,
+            caption,
+            request_id=request_id,
+            bot_token=config.TELEGRAM_BOT_TOKEN,
+            api_key=config.OPENAI_API_KEY,
+        )
+    except openai.AuthenticationError:
+        elapsed = time.monotonic() - start_time
+        logger.error(
+            "request.complete | req=%s total_time=%.1fs status=failure reason=llm_auth",
+            request_id,
+            elapsed,
+        )
+        await _send_error(chat_id, _ERR_LLM_AUTH, config, store)
+        return
+    except RuntimeError:
+        elapsed = time.monotonic() - start_time
+        logger.error(
+            "request.complete | req=%s total_time=%.1fs status=failure reason=llm_timeout",
+            request_id,
+            elapsed,
+        )
+        await _send_error(chat_id, _ERR_LLM_TIMEOUT, config, store)
+        return
+
+    if result is None:
+        elapsed = time.monotonic() - start_time
+        logger.warning(
+            "request.complete | req=%s total_time=%.1fs status=failure reason=receipt_download_failed",
+            request_id,
+            elapsed,
+        )
+        await _send_error(chat_id, _ERR_RECEIPT_DOWNLOAD, config, store)
+        return
+
+    if not result.is_receipt:
+        elapsed = time.monotonic() - start_time
+        logger.info(
+            "request.complete | req=%s total_time=%.1fs status=failure reason=not_a_receipt",
+            request_id,
+            elapsed,
+        )
+        await _send_error(chat_id, _ERR_RECEIPT_NOT_FOUND, config, store)
+        return
+
+    # Store synthetic user turn for conversation context
+    summary = (
+        f"[Foto de ticket: ${result.amount:,.0f} {result.currency} "
+        f"{result.description}]"
+    )
+    store.add_turn(chat_id, Turn(role="user", text=summary))
+
+    # Execute log_expense directly, bypassing the router
+    tool = registry.get_tool("log_expense")
+    if tool is None:
+        await _send_error(chat_id, _ERR_UNKNOWN_TASK, config, store)
+        return
+
+    task_data = {
+        "amount": result.amount,
+        "currency": result.currency,
+        "description": result.description,
+        "date": result.date,
+    }
+    task_result = TaskResult(task="log_expense", data=task_data)
+    task_id = f"{request_id}/1"
+
+    result_text = await _execute_tool_safe(
+        tool, task_result, task_id, config, db_pool, chat_id, request_id,
+    )
+
+    store.add_turn(
+        chat_id,
+        Turn(
+            role="bot",
+            text=result_text,
+            task_result={"task": "log_expense", "source": "receipt_photo"},
+        ),
+    )
+    await send_message(chat_id, result_text, config.TELEGRAM_BOT_TOKEN)
+
+    elapsed = time.monotonic() - start_time
+    logger.info(
+        "request.complete | req=%s total_time=%.1fs tasks=1 tasks_ok=1 "
+        "tasks_err=0 status=success source=receipt_photo",
+        request_id,
+        elapsed,
+    )
 
 
 async def _route_with_error_handling(

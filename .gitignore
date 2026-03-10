@@ -37,3 +37,6 @@ PLAN.md
 CRON_SNAPSHOT.md
 
 product-files/
+
+# Memory (personal spending data)
+memory/spending_behaviors.md

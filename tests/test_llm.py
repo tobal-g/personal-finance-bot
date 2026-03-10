@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import openai
 import pytest
 
-from bot.integrations.llm import call_llm
+from bot.integrations.llm import call_llm, call_llm_vision
 
 
 def _mock_response(content: str, total_tokens: int = 100):
@@ -99,3 +99,107 @@ class TestCallLLM:
                     )
 
         assert mock_create.call_count == 3
+
+
+class TestCallLLMVision:
+    async def test_sends_image_content_block(self):
+        mock_create = AsyncMock(return_value=_mock_response('{"is_receipt": true}'))
+        with patch("bot.integrations.llm.openai.AsyncOpenAI") as mock_cls:
+            mock_cls.return_value.chat.completions.create = mock_create
+            result = await call_llm_vision(
+                "system prompt",
+                b"\xff\xd8fake-jpeg",
+                purpose="test",
+                request_id="req_1234",
+                api_key="sk-test",
+            )
+
+        assert result == '{"is_receipt": true}'
+        mock_create.assert_called_once()
+        call_kwargs = mock_create.call_args[1]
+        user_content = call_kwargs["messages"][1]["content"]
+        assert isinstance(user_content, list)
+        assert user_content[0]["type"] == "image_url"
+        assert user_content[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+        assert user_content[0]["image_url"]["detail"] == "high"
+
+    async def test_includes_caption_when_provided(self):
+        mock_create = AsyncMock(return_value=_mock_response('{"is_receipt": true}'))
+        with patch("bot.integrations.llm.openai.AsyncOpenAI") as mock_cls:
+            mock_cls.return_value.chat.completions.create = mock_create
+            await call_llm_vision(
+                "system prompt",
+                b"\xff\xd8fake-jpeg",
+                "USD farmacia",
+                purpose="test",
+                request_id="req_1234",
+                api_key="sk-test",
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        user_content = call_kwargs["messages"][1]["content"]
+        assert len(user_content) == 2
+        assert user_content[1]["type"] == "text"
+        assert "USD farmacia" in user_content[1]["text"]
+
+    async def test_no_caption_single_content_block(self):
+        mock_create = AsyncMock(return_value=_mock_response('{"ok": true}'))
+        with patch("bot.integrations.llm.openai.AsyncOpenAI") as mock_cls:
+            mock_cls.return_value.chat.completions.create = mock_create
+            await call_llm_vision(
+                "sys",
+                b"\xff\xd8fake",
+                purpose="test",
+                request_id="req_1",
+                api_key="sk-t",
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        user_content = call_kwargs["messages"][1]["content"]
+        assert len(user_content) == 1
+
+    async def test_retry_on_rate_limit(self):
+        mock_create = AsyncMock(
+            side_effect=[
+                openai.RateLimitError(
+                    message="Rate limited",
+                    response=MagicMock(status_code=429),
+                    body=None,
+                ),
+                _mock_response('{"ok": true}'),
+            ]
+        )
+        with patch("bot.integrations.llm.openai.AsyncOpenAI") as mock_cls:
+            mock_cls.return_value.chat.completions.create = mock_create
+            with patch("bot.integrations.llm.asyncio.sleep", new_callable=AsyncMock):
+                result = await call_llm_vision(
+                    "sys",
+                    b"\xff\xd8fake",
+                    purpose="test",
+                    request_id="req_1",
+                    api_key="sk-t",
+                )
+
+        assert result == '{"ok": true}'
+        assert mock_create.call_count == 2
+
+    async def test_auth_error_not_retried(self):
+        mock_create = AsyncMock(
+            side_effect=openai.AuthenticationError(
+                message="Invalid API key",
+                response=MagicMock(status_code=401),
+                body=None,
+            )
+        )
+        with patch("bot.integrations.llm.openai.AsyncOpenAI") as mock_cls:
+            mock_cls.return_value.chat.completions.create = mock_create
+            with pytest.raises(openai.AuthenticationError):
+                await call_llm_vision(
+                    "sys",
+                    b"\xff\xd8fake",
+                    purpose="test",
+                    request_id="req_1",
+                    api_key="bad",
+                )
+
+        assert mock_create.call_count == 1

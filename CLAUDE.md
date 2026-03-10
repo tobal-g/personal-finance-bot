@@ -10,7 +10,7 @@ Telegram expenses bot — Python 3.12, async architecture (aiohttp + asyncpg + O
 # Run the bot
 python -m bot.main
 
-# Run tests (124 tests, all passing)
+# Run tests (162 tests, all passing)
 .venv/bin/pytest tests/ -v
 
 # Run a single test file
@@ -25,6 +25,8 @@ docker run --env-file .env -p 8080:8080 finance-bot
 
 **Pipeline:** `webhook.py` → validate → build context (prior turns only) → store current turn → fetch expense types → route (LLM) → clarify or execute tool → send response
 
+**Receipt photo pipeline:** `webhook.py` (detect photo) → `telegram.py` (download via getFile API) → `llm.py` (vision extraction) → `receipt.py` (orchestrate) → bypass router → `log_expense` tool directly
+
 **Key files:**
 - `bot/webhook.py` — Main pipeline, error handling, health endpoint
 - `bot/agent/router.py` — LLM classifies messages into TaskResult(s)
@@ -32,7 +34,8 @@ docker run --env-file .env -p 8080:8080 finance-bot
 - `bot/agent/clarifier.py` — Generates clarification messages
 - `bot/tools/__init__.py` — ToolRegistry with auto-discovery from `bot/tools/`
 - `bot/tools/base.py` — `BaseTool` ABC + `ToolContext` dataclass
-- `bot/integrations/llm.py` — OpenAI wrapper, 3x retry, JSON mode, `gpt-5.2`
+- `bot/agent/receipt.py` — Receipt photo extraction orchestrator (download + vision LLM)
+- `bot/integrations/llm.py` — OpenAI wrapper, 3x retry, JSON mode, vision support, `gpt-5.2`
 - `bot/context/store.py` — In-memory per-chat history (TTL 600s, max 6 turns, user turns truncated at `max_user_chars`)
 - `bot/db/queries.py` — All SQL constants + `DB_SCHEMA_CONTEXT`
 
@@ -55,7 +58,7 @@ Neon PostgreSQL. Tables: `expenses`, `exchange_rates`, `expense_types`, `budget`
 
 ## Error handling
 
-- `bot/webhook.py` has error constants: `_ERR_ROUTER_MALFORMED`, `_ERR_UNKNOWN_TASK`, `_ERR_LLM_TIMEOUT`, `_ERR_LLM_AUTH`, `_ERR_DB_CONNECTION`, `_ERR_TOOL_GENERIC`
+- `bot/webhook.py` has error constants: `_ERR_ROUTER_MALFORMED`, `_ERR_UNKNOWN_TASK`, `_ERR_LLM_TIMEOUT`, `_ERR_LLM_AUTH`, `_ERR_DB_CONNECTION`, `_ERR_TOOL_GENERIC`, `_ERR_RECEIPT_DOWNLOAD`, `_ERR_RECEIPT_NOT_FOUND`
 - Multi-task partial success: each tool executes in `_execute_tool_safe()`, failures don't block other tasks
 - All error messages are in Argentine Spanish and transparent about internals
 - `request.complete` log: `total_time`, `tasks_ok`, `tasks_err`, `status` (success/partial/failure)

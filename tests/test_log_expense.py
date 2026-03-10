@@ -203,3 +203,29 @@ async def test_log_expense_bad_date(tool):
     )
 
     assert "No pude interpretar la fecha" in result
+
+
+async def test_spending_behaviors_injected_into_prompt(tool):
+    """Spending behaviors from memory are included in the categorization prompt."""
+    types = ["Supermercado", "Farmacia"]
+    insert_row = {
+        "expense_id": 99,
+        "monto_ars_final": 5000,
+        "monto_usd_final": 3.45,
+        "exchange_rate_used": 1450,
+    }
+    conn = _FakeConn(expense_types=types, insert_result=insert_row)
+    pool = _FakePool(conn)
+    llm_json = json.dumps({"tipo": "Supermercado", "motivo": "farmacity"})
+    ctx = _make_context(pool, llm_return=llm_json)
+
+    await tool.execute(
+        {"amount": 5000, "currency": "ARS", "description": "farmacity", "date": "hoy"},
+        ctx,
+    )
+
+    # Verify the system prompt sent to the LLM contains spending behaviors
+    call_kwargs = ctx.llm_call.call_args
+    system_prompt = call_kwargs.kwargs.get("system_prompt") or call_kwargs[1].get("system_prompt", call_kwargs[0][0] if call_kwargs[0] else "")
+    assert "Farmacity" in system_prompt
+    assert "Spending behaviors" in system_prompt
