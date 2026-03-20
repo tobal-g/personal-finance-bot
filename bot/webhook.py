@@ -21,6 +21,9 @@ from bot.utils.logging_safety import redact_sensitive
 
 logger = logging.getLogger(__name__)
 
+# Webhook path — single source of truth for route + Telegram registration.
+WEBHOOK_PATH = "/webhook"
+
 # Module-level singleton initialized in create_app
 _tool_registry = ToolRegistry()
 
@@ -84,7 +87,7 @@ def create_app(config, db_pool) -> web.Application:
     # Auto-discover tools
     _tool_registry.discover()
 
-    app.router.add_post("/webhook", handle_webhook)
+    app.router.add_post(WEBHOOK_PATH, handle_webhook)
     app.router.add_get("/health", handle_health)
     return app
 

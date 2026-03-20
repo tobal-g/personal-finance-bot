@@ -11,7 +11,7 @@ from aiohttp import web
 from bot.config import Config
 from bot.db.pool import close_pool, create_pool
 from bot.utils.logging_safety import redact_sensitive
-from bot.webhook import create_app
+from bot.webhook import WEBHOOK_PATH, create_app
 
 logger = logging.getLogger(__name__)
 
@@ -21,26 +21,52 @@ TELEGRAM_API = "https://api.telegram.org"
 
 
 async def set_webhook(config: Config) -> None:
-    """Register webhook with Telegram."""
-    url = f"{TELEGRAM_API}/bot{config.TELEGRAM_BOT_TOKEN}/setWebhook"
+    """Register webhook with Telegram and verify the registration."""
+    webhook_url = f"{config.WEBHOOK_URL}{WEBHOOK_PATH}"
+    api_base = f"{TELEGRAM_API}/bot{config.TELEGRAM_BOT_TOKEN}"
+
+    # Register
     payload = {
-        "url": f"{config.WEBHOOK_URL}/webhook",
+        "url": webhook_url,
         "secret_token": config.WEBHOOK_SECRET_TOKEN,
         "allowed_updates": ["message"],
         "drop_pending_updates": True,
         "max_connections": 40,
     }
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
+        async with session.post(f"{api_base}/setWebhook", json=payload) as resp:
             body = await resp.json()
-            if resp.status == 200 and body.get("ok"):
-                logger.info("webhook.registered | url=%s", config.WEBHOOK_URL)
-            else:
+            if resp.status != 200 or not body.get("ok"):
                 logger.error(
                     "webhook.register_failed | response=%s",
                     redact_sensitive(body),
                 )
                 raise RuntimeError(f"Failed to set webhook: {body}")
+
+        # Verify — confirm Telegram actually has the URL we expect
+        async with session.get(f"{api_base}/getWebhookInfo") as resp:
+            body = await resp.json()
+            registered_url = body.get("result", {}).get("url", "")
+            pending = body.get("result", {}).get("pending_update_count", 0)
+            last_error = body.get("result", {}).get("last_error_message", "")
+
+            if registered_url == webhook_url:
+                logger.info(
+                    "webhook.verified | url=%s pending=%d",
+                    webhook_url,
+                    pending,
+                )
+            else:
+                logger.error(
+                    "webhook.mismatch | expected=%s registered=%s last_error=%s",
+                    webhook_url,
+                    registered_url,
+                    last_error,
+                )
+                raise RuntimeError(
+                    f"Webhook URL mismatch: expected {webhook_url}, "
+                    f"got {registered_url}"
+                )
 
 
 async def on_startup(app: web.Application) -> None:
