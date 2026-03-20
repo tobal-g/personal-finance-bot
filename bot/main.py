@@ -43,21 +43,6 @@ async def set_webhook(config: Config) -> None:
                 raise RuntimeError(f"Failed to set webhook: {body}")
 
 
-async def delete_webhook(config: Config) -> None:
-    """Unregister webhook with Telegram."""
-    url = f"{TELEGRAM_API}/bot{config.TELEGRAM_BOT_TOKEN}/deleteWebhook"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url) as resp:
-                body = await resp.json()
-                logger.info("webhook.deleted | response=%s", body)
-    except Exception as exc:
-        logger.warning(
-            "webhook.delete_failed | error=%s",
-            redact_sensitive(exc)[:200],
-        )
-
-
 async def on_startup(app: web.Application) -> None:
     """Startup hook: register webhook."""
     logger.info("app.starting | version=%s", VERSION)
@@ -65,10 +50,8 @@ async def on_startup(app: web.Application) -> None:
 
 
 async def on_shutdown(app: web.Application) -> None:
-    """Shutdown hook: delete webhook, close DB pool."""
+    """Shutdown hook: close DB pool."""
     logger.info("app.shutting_down | version=%s", VERSION)
-    config = app["config"]
-    await delete_webhook(config)
     pool = app.get("db_pool")
     if pool is not None:
         await close_pool(pool)
