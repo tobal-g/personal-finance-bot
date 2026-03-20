@@ -92,6 +92,7 @@ DB_SCHEMA_CONTEXT = """\
 - transaction_count (int)
 - total_original_ars (numeric)
 - total_original_usd (numeric)
+- budget_usd (numeric, nullable) — frozen budget for that tipo at month close
 - created_at (timestamptz, default now())
 
 ### Views
@@ -107,8 +108,15 @@ NOTE: These columns (total_gastado_en_ars, etc.) ONLY exist on this view. When q
 - All monetary amounts use numeric type for precision.
 - exchange_rates.rate is ARS per 1 USD.
 - budget_status and current_month_summary are views that ONLY contain current month data. NEVER use them for past months.
-- For past months, use monthly_snapshots (aggregated) or query the expenses table directly with date filters.
-- monthly_snapshots stores pre-aggregated data per year_month + tipo. Use it for past month queries when available.
+- The budget table stores CURRENT budget only. It has no history — do NOT join it for past month queries.
+- For past months, prefer monthly_snapshots — it has spending totals AND the frozen budget_usd for each tipo.
+- monthly_snapshots stores pre-aggregated data per year_month + tipo. Use it for all past month queries.
+- If monthly_snapshots returns no rows for a past month (snapshot not yet generated), fall back to querying the expenses table directly with date filters + LEFT JOIN budget.
 - Today's date can be obtained with CURRENT_DATE.
 - For date filtering, expense_date is a date column (no time component).
+
+### Common past-month query patterns
+- "cuánto gasté el mes pasado": SELECT tipo, total_usd, budget_usd FROM monthly_snapshots WHERE year_month = to_char(CURRENT_DATE - INTERVAL '1 month', 'YYYY-MM')
+- "cuánto gasté en febrero": SELECT tipo, total_usd, budget_usd FROM monthly_snapshots WHERE year_month = '2026-02'
+- Total spent last month: SELECT SUM(total_usd) FROM monthly_snapshots WHERE year_month = to_char(CURRENT_DATE - INTERVAL '1 month', 'YYYY-MM')
 """

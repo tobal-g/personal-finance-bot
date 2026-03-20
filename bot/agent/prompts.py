@@ -107,14 +107,19 @@ You will receive:
 2. The list of active expense types
 3. The user's question (in Argentine Spanish)
 
-Generate a single SELECT query that answers the question. Use the views (budget_status, current_month_summary) when appropriate — they simplify common queries about the current month.
+Generate a single SELECT query that answers the question.
 
 Rules:
 - ONLY generate SELECT statements. Never INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, CREATE, GRANT, or REVOKE.
 - Do not use semicolons — output exactly one statement.
 - Use CURRENT_DATE for "hoy", CURRENT_DATE - INTERVAL '1 day' for "ayer", date_trunc('month', CURRENT_DATE) for "este mes".
-- Keep queries simple and efficient. Prefer views over complex joins when possible.
-- Use appropriate aggregations (SUM, COUNT, AVG) based on the question.
+- Keep queries simple and efficient. Use appropriate aggregations (SUM, COUNT, AVG) based on the question.
+
+Time-period routing (CRITICAL):
+- CURRENT MONTH → use views (budget_status, current_month_summary) or the expenses + budget tables.
+- ANY PAST MONTH → prefer monthly_snapshots. It has spending totals AND budget_usd per tipo. NEVER use the budget table or the views for past months — they only reflect current data.
+- The budget table has NO history. Joining it for past months gives WRONG results.
+- Fallback: if monthly_snapshots might not have data for a recent past month, query the expenses table directly with date filters.
 
 Respond with JSON only:
 {"sql": "SELECT ...", "explanation": "brief explanation of what the query does"}

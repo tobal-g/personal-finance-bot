@@ -114,7 +114,7 @@ python -m bot.main
 .venv/bin/pytest tests/ -v
 ```
 
-162 tests across 18 test files. Uses `pytest-asyncio` with `asyncio_mode = "auto"`.
+163 tests across 18 test files. Uses `pytest-asyncio` with `asyncio_mode = "auto"`.
 
 ### Context and token controls
 
@@ -147,16 +147,22 @@ docker run --env-file .env -p 8080:8080 finance-bot
 | `exchange_rates` | ARS/USD exchange rates |
 | `expense_types` | Active expense categories |
 | `budget` | Monthly budget per category (USD) |
-| `monthly_snapshots` | Aggregated monthly data (cron job) |
+| `monthly_snapshots` | Aggregated monthly data + frozen budget (cron job on 1st of each month) |
 
 | View | Purpose |
 |------|---------|
 | `budget_status` | Current month: budget vs spent per category |
 | `current_month_summary` | Current month expenses by type |
 
+## Monthly snapshot cron
+
+`scripts/monthly_snapshot.py` runs on the 1st of each month (Railway cron: `0 4 1 * *`). It aggregates the previous month's expenses and freezes the current budget into `monthly_snapshots` via a FULL OUTER JOIN. Idempotent — safe to re-run (ON CONFLICT upsert).
+
 ## Project structure
 
 ```
+scripts/
+└── monthly_snapshot.py   # Cron: aggregate month + freeze budget
 bot/
 ├── main.py              # Entry point
 ├── config.py            # Env var validation

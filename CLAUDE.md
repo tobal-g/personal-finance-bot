@@ -10,7 +10,7 @@ Telegram expenses bot — Python 3.12, async architecture (aiohttp + asyncpg + O
 # Run the bot
 python -m bot.main
 
-# Run tests (162 tests, all passing)
+# Run tests (163 tests, all passing)
 .venv/bin/pytest tests/ -v
 
 # Run a single test file
@@ -45,7 +45,9 @@ docker run --env-file .env -p 8080:8080 finance-bot
 
 ## Database
 
-Neon PostgreSQL. Tables: `expenses`, `exchange_rates`, `expense_types`, `budget`, `monthly_snapshots`. Views: `budget_status`, `current_month_summary` (current month only — for past months query `expenses` directly or `monthly_snapshots`).
+Neon PostgreSQL. Tables: `expenses`, `exchange_rates`, `expense_types`, `budget`, `monthly_snapshots` (includes `budget_usd` — frozen budget at month close). Views: `budget_status`, `current_month_summary` (current month only). For past months, use `monthly_snapshots` (has both spending and budget data).
+
+**Monthly snapshot cron:** `scripts/monthly_snapshot.py` — runs on 1st of each month (`0 4 1 * *`), aggregates previous month's expenses + budget into `monthly_snapshots` via FULL OUTER JOIN. Idempotent (ON CONFLICT upsert).
 
 ## Testing patterns
 
