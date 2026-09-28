@@ -5,6 +5,7 @@ Runs on the 1st of each month via Railway cron: 0 4 1 * * (4am UTC = 1am Argenti
 
 Pass ``--month YYYY-MM`` to backfill a historical month. Backfills update the
 expense-derived totals but preserve any budget already frozen in the snapshot.
+New historical categories have an unknown (NULL) budget, never today's budget.
 """
 
 import argparse
@@ -50,6 +51,15 @@ def next_month(month_start: date) -> date:
 
 def snapshot_sql(*, preserve_existing_budget: bool) -> str:
     """Build the monthly upsert, retaining frozen budgets during backfills."""
+    # Existing snapshots also keep categories whose last expense was deleted in
+    # the aggregation, so their totals are reset to zero during a backfill.
+    budget_source = (
+        """SELECT tipo, budget_usd
+    FROM monthly_snapshots
+    WHERE year_month = to_char($1::date, 'YYYY-MM')"""
+        if preserve_existing_budget
+        else "SELECT tipo, amount_usd AS budget_usd FROM budget"
+    )
     budget_update = (
         "monthly_snapshots.budget_usd"
         if preserve_existing_budget
@@ -61,6 +71,8 @@ WITH month_expenses AS (
     FROM expenses
     WHERE expense_date >= $1::date
       AND expense_date < $2::date
+), month_budget AS (
+    {budget_source}
 )
 INSERT INTO monthly_snapshots (
     year_month, tipo, total_ars, total_usd, transaction_count,
@@ -74,10 +86,10 @@ SELECT
     COUNT(e.id),
     COALESCE(SUM(CASE WHEN e.currency = 'ARS' THEN e.monto_ars ELSE 0 END), 0),
     COALESCE(SUM(CASE WHEN e.currency = 'USD' THEN e.monto_usd ELSE 0 END), 0),
-    b.amount_usd
-FROM budget b
+    b.budget_usd
+FROM month_budget b
 FULL OUTER JOIN month_expenses e ON e.tipo = b.tipo
-GROUP BY COALESCE(e.tipo, b.tipo), b.amount_usd
+GROUP BY COALESCE(e.tipo, b.tipo), b.budget_usd
 ON CONFLICT (year_month, tipo) DO UPDATE SET
     total_ars = EXCLUDED.total_ars,
     total_usd = EXCLUDED.total_usd,
@@ -118,7 +130,7 @@ def parse_args() -> argparse.Namespace:
         "--month",
         metavar="YYYY-MM",
         type=_parse_backfill_month,
-        help="Backfill this historical month while preserving existing frozen budgets",
+        help="Backfill this historical month; preserve frozen budgets and leave unknown budgets unset",
     )
     return parser.parse_args()
 
@@ -176,10 +188,7 @@ async def main(args: argparse.Namespace) -> None:
                 f"budget_categories={budget_count}"
             )
 
-            if expense_count == 0 and budget_count == 0:
-                log("snapshot.skip | no expenses and no budget categories found — nothing to snapshot")
-                return
-
+            # Empty sources can still require clearing stale historical totals.
             log("snapshot.execute | running snapshot upsert")
             result = await conn.execute(
                 snapshot_sql(preserve_existing_budget=preserve_existing_budget),
